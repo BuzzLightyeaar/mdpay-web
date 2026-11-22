@@ -5,6 +5,13 @@ import { compare, hash } from "bcryptjs";
 import { db } from "@/lib/db";
 import { fail, ok, messageFrom, publicUser, toAmount } from "@/lib/api";
 import { serializeEntry, serializeInvoice } from "@/lib/serializers";
+import {
+  TransferError,
+  lookupAccount,
+  parseAccountNumber,
+  performTransfer,
+  verifyPassword,
+} from "@/lib/transfer";
 
 const ISSUER = "mdpay";
 const AUDIENCE = "mobile";
@@ -80,6 +87,14 @@ const body = z.discriminatedUnion("action", [
     action: z.literal("create_invoice"),
     amount: z.string(),
     description: z.string().trim().max(200).optional(),
+  }),
+  z.object({ action: z.literal("lookup_account"), accountNumber: z.string() }),
+  z.object({
+    action: z.literal("transfer"),
+    accountNumber: z.string(),
+    amount: z.string(),
+    password: z.string().min(1, "Нууц үгээ оруулна уу"),
+    note: z.string().trim().max(200).optional(),
   }),
 ]);
 
@@ -195,8 +210,35 @@ export async function POST(req: NextRequest) {
         });
         return ok({ invoice: serializeInvoice(created), qrText }, 201);
       }
+      case "lookup_account": {
+        const num = parseAccountNumber(input.accountNumber);
+        if (num === null) return fail("Дансны дугаар буруу байна", 400);
+        const account = await lookupAccount(num);
+        if (!account) return fail("Данс олдсонгүй", 404);
+        return ok({ account });
+      }
+
+      case "transfer": {
+        const to = parseAccountNumber(input.accountNumber);
+        if (to === null) return fail("Дансны дугаар буруу байна", 400);
+        const amount = toAmount(input.amount);
+        if (amount === null) return fail("Дүн буруу байна", 400);
+        await verifyPassword(user.account_id, input.password);
+        const balance = await performTransfer({
+          fromUserId: user.account_id,
+          toAccountNumber: to,
+          amount,
+          note: input.note,
+        });
+        return ok(
+          { success: true, balance: balance ? balance.toFixed(0) : "0" },
+          201,
+        );
+      }
     }
   } catch (error) {
+    if (error instanceof TransferError)
+      return fail(error.message, error.status);
     if (error instanceof z.ZodError) return fail(messageFrom(error), 400);
     if (
       typeof error === "object" &&
