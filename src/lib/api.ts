@@ -17,14 +17,16 @@ export function ok(data: unknown, status = 200) {
 // Browser form submissions must originate from our own site. Reject missing Origin for mutations.
 export function validOrigin(request: NextRequest) {
   const origin = request.headers.get("origin");
-  const configured = process.env.NEXT_PUBLIC_APP_URL;
-  if (!origin || !configured) return false;
+  const host =
+    request.headers.get("x-forwarded-host") ?? request.headers.get("host");
+  if (!origin || !host) return false;
   try {
-    return new URL(origin).origin === new URL(configured).origin;
+    return new URL(origin).host === host;
   } catch {
     return false;
   }
 }
+
 export function messageFrom(error: unknown) {
   if (error instanceof ZodError)
     return error.issues[0]?.message || "Оруулсан мэдээлэл буруу байна";
