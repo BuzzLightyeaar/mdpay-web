@@ -3,7 +3,7 @@ import { z } from "zod";
 import { compare } from "bcryptjs";
 import { db } from "@/lib/db";
 import { setSession } from "@/lib/auth";
-import { fail, ok, validOrigin, publicUser } from "@/lib/api";
+import { fail, ok, validOrigin, publicUser, serverError } from "@/lib/api";
 
 const schema = z.object({ email: z.email(), password: z.string().min(1) });
 
@@ -23,6 +23,6 @@ export async function POST(req: NextRequest) {
   } catch (e) {
     if (e instanceof z.ZodError) return fail("Буруу мэдээлэл оруулсан байна");
     console.error(e);
-    return fail("Нэвтрэхэд алдаа гарлаа", 500);
+    return serverError("Нэвтрэхэд алдаа гарлаа", e);
   }
 }

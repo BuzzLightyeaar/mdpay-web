@@ -62,3 +62,26 @@ export function publicUser(user: DbUser) {
     createdAt: user.created_at ?? null,
   };
 }
+
+// EXPOSE_ERRORS=true үед л алдааны дэлгэрэнгүйг response-д оруулна
+export function serverError(message: string, error: unknown, status = 500) {
+  console.error(message, error);
+  let detail: string | undefined;
+  if (process.env.EXPOSE_ERRORS === "true") {
+    const code =
+      typeof error === "object" && error !== null && "code" in error
+        ? `[${String(error.code)}] `
+        : "";
+    const raw =
+      error instanceof Error
+        ? `${error.name}: ${error.message}`
+        : String(error);
+    detail = (code + raw)
+      .replace(/postgres(ql)?:\/\/[^\s"']+/gi, "postgresql://***")
+      .slice(0, 800);
+  }
+  return NextResponse.json(
+    detail ? { error: message, detail } : { error: message },
+    { status, headers: { "Cache-Control": "no-store" } },
+  );
+}
