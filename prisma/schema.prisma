@@ -1,0 +1,78 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model users {
+  account_id        Int            @id @default(autoincrement())
+  email             String         @unique @db.VarChar(100)
+  passwordhash      String         @db.VarChar(255)
+  firstname         String?        @db.VarChar(50)
+  lastname          String?        @db.VarChar(50)
+  status            String?        @default("active") @db.VarChar(20)
+  created_at        DateTime?      @default(now()) @db.Timestamp(6)
+  reset_code        String?        @db.VarChar(10)
+  reset_code_expiry DateTime?      @db.Timestamptz(6) 
+  type          String? @default("PERSONAL") @db.VarChar(20)
+  business_name String? @db.VarChar(120)
+
+  accounts          accounts[]
+  qr_codes          qr_codes[]
+  transactions      transactions[]
+}
+
+model accounts {
+  id             Int       @id @default(autoincrement())
+  account_id     Int?
+  account_number BigInt @unique @default(autoincrement())
+  balance        Decimal?  @default(0) @db.Decimal(15, 2)
+  currency       String?   @default("MNT") @db.VarChar(10)
+  created_at     DateTime? @default(now()) @db.Timestamp(6)
+  account_token  String    @db.VarChar(20)
+
+  users users? @relation(fields: [account_id], references: [account_id], onDelete: NoAction, onUpdate: NoAction)
+
+  qr_codes qr_codes[]
+
+  transactions_transactions_default_account_idToaccounts   transactions[] @relation("transactions_default_account_idToaccounts")
+  transactions_transactions_secondary_account_idToaccounts transactions[] @relation("transactions_secondary_account_idToaccounts")
+}
+
+model qr_codes {
+  qr_id          BigInt    @id @default(autoincrement())
+  account_id     Int?
+  account_number BigInt?
+  qr_text        String?   @db.Text
+  created_at     DateTime? @default(now()) @db.Timestamp(6)
+  amount         Decimal?  @db.Decimal
+  description    String?   @db.VarChar
+  status     String?   @default("PENDING") @db.VarChar(20)
+  expires_at DateTime? @db.Timestamp(6)
+  paid_at    DateTime? @db.Timestamp(6)
+
+  users    users?    @relation(fields: [account_id], references: [account_id], onDelete: NoAction, onUpdate: NoAction)
+  accounts accounts? @relation(fields: [account_number], references: [account_number], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model transactions {
+  transaction_id       Int       @id @default(autoincrement())
+  account_id           Int?
+  default_account_id   BigInt?
+  secondary_account_id BigInt?
+  amount               Decimal   @db.Decimal(15, 2)
+  currency             String?   @default("MNT") @db.VarChar(10)
+  transaction_type     String?   @db.VarChar(20)
+  status               String?   @default("success") @db.VarChar(20)
+  description          String?   @db.VarChar(255)
+  balance              Decimal?  @db.Decimal(15, 2)
+  created_at           DateTime? @default(now()) @db.Timestamp(6)
+
+  users users? @relation(fields: [account_id], references: [account_id], onDelete: NoAction, onUpdate: NoAction)
+
+  accounts_transactions_default_account_idToaccounts   accounts? @relation("transactions_default_account_idToaccounts", fields: [default_account_id], references: [account_number], onDelete: NoAction, onUpdate: NoAction, map: "transactions_default_account_number_fkey")
+  accounts_transactions_secondary_account_idToaccounts accounts? @relation("transactions_secondary_account_idToaccounts", fields: [secondary_account_id], references: [account_number], onDelete: NoAction, onUpdate: NoAction, map: "transactions_secondary_account_number_fkey")
+}
