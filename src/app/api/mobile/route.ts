@@ -251,3 +251,6 @@ export async function POST(req: NextRequest) {
     return fail("Серверийн алдаа гарлаа", 500);
   }
 }
+export function OPTIONS() {
+  return new Response(null, { status: 204 });
+}
