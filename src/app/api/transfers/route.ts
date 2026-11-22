@@ -1,56 +1,112 @@
 import { NextRequest } from "next/server";
-import { Prisma, EntryKind } from "@prisma/client";
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
-import { fail, ok, toAmount, validOrigin } from "@/lib/api";
+import { fail, ok, messageFrom, toAmount, validOrigin } from "@/lib/api";
 
 const schema = z.object({
-  recipientEmail: z.email(),
+  email: z
+    .email("И-мэйл хаяг буруу байна")
+    .transform((x) => x.trim().toLowerCase()),
   amount: z.string(),
-  note: z.string().trim().max(200).default("Дотоод шилжүүлэг"),
+  note: z.string().trim().max(200).optional(),
 });
+
+class TransferError extends Error {
+  constructor(
+    message: string,
+    public status: number,
+  ) {
+    super(message);
+  }
+}
+
 export async function POST(req: NextRequest) {
-  if (!validOrigin(req)) return fail("Хүсэлтийн эх сурвалж баталгаажаагүй", 403);
+  if (!validOrigin(req))
+    return fail("Хүсэлтийн эх сурвалж баталгаажаагүй", 403);
   const user = await getCurrentUser();
   if (!user) return fail("Нэвтэрнэ үү", 401);
-  let input: z.infer<typeof schema>;
-  try { input = schema.parse(await req.json()); }
-  catch { return fail("Шилжүүлгийн мэдээлэл буруу байна"); }
-  const amount = toAmount(input.amount);
-  if (!amount) return fail("Дүн 1–1,000,000,000,000 ₮ бүхэл тоо байх шаардлагатай");
-  const recipient = await db.user.findUnique({ where: { email: input.recipientEmail.trim().toLowerCase() } });
-  if (!recipient) return fail("Хүлээн авагч бүртгэлгүй байна", 404);
-  if (recipient.id === user.id) return fail("Өөрийн данс руу шилжүүлэх боломжгүй");
 
   try {
-    const ref = crypto.randomUUID();
+    const input = schema.parse(await req.json());
+    const amount = toAmount(input.amount);
+    if (amount === null) return fail("Дүн буруу байна", 400);
+    const amt = new Prisma.Decimal(amount.toString());
+
+    const receiver = await db.users.findUnique({
+      where: { email: input.email },
+    });
+    if (!receiver) return fail("Хүлээн авагч олдсонгүй", 404);
+    if (receiver.account_id === user.account_id)
+      return fail("Өөр рүүгээ шилжүүлэх боломжгүй", 400);
+
     const result = await db.$transaction(async (tx) => {
-      const senderWallet = await tx.wallet.findUniqueOrThrow({ where: { userId: user.id } });
-      const receiverWallet = await tx.wallet.findUniqueOrThrow({ where: { userId: recipient.id } });
-      const debit = await tx.wallet.updateMany({
-        where: { id: senderWallet.id, balance: { gte: amount } },
-        data: { balance: { decrement: amount } },
-      });
-      if (debit.count !== 1) throw new Error("INSUFFICIENT_BALANCE");
-      const [sender, receiver] = await Promise.all([
-        tx.wallet.findUniqueOrThrow({ where: { id: senderWallet.id } }),
-        tx.wallet.update({ where: { id: receiverWallet.id }, data: { balance: { increment: amount } } }),
+      const [from, to] = await Promise.all([
+        tx.accounts.findFirst({
+          where: { account_id: user.account_id },
+          orderBy: { id: "asc" },
+        }),
+        tx.accounts.findFirst({
+          where: { account_id: receiver.account_id },
+          orderBy: { id: "asc" },
+        }),
       ]);
-      await tx.walletEntry.createMany({ data: [
-        { walletId: sender.id, amount: -amount, balanceAfter: sender.balance, kind: EntryKind.TRANSFER_SENT,
-          note: input.note || "Дотоод шилжүүлэг", counterpartyName: recipient.businessName || recipient.name, referenceId: ref },
-        { walletId: receiver.id, amount, balanceAfter: receiver.balance, kind: EntryKind.TRANSFER_RECEIVED,
-          note: input.note || "Дотоод шилжүүлэг", counterpartyName: user.businessName || user.name, referenceId: ref },
-      ] });
+      if (!from) throw new TransferError("Таны данс олдсонгүй", 404);
+      if (!to) throw new TransferError("Хүлээн авагчийн данс олдсонгүй", 404);
+
+      // Хоёр дансыг тогтмол дарааллаар түгжинэ (deadlock-оос сэргийлнэ)
+      await tx.$queryRaw`SELECT id FROM accounts WHERE id IN (${from.id}, ${to.id}) ORDER BY id FOR UPDATE`;
+
+      const fresh = await tx.accounts.findUniqueOrThrow({
+        where: { id: from.id },
+      });
+      if ((fresh.balance ?? new Prisma.Decimal(0)).lt(amt))
+        throw new TransferError("Үлдэгдэл хүрэлцэхгүй байна", 400);
+
+      const sender = await tx.accounts.update({
+        where: { id: from.id },
+        data: { balance: { decrement: amt } },
+      });
+      const recipient = await tx.accounts.update({
+        where: { id: to.id },
+        data: { balance: { increment: amt } },
+      });
+
+      const description = input.note || "Мөнгөн шилжүүлэг";
+      await tx.transactions.createMany({
+        data: [
+          {
+            account_id: user.account_id,
+            default_account_id: from.account_number,
+            secondary_account_id: to.account_number,
+            amount: amt,
+            transaction_type: "TRANSFER_OUT",
+            description,
+            balance: sender.balance,
+          },
+          {
+            account_id: receiver.account_id,
+            default_account_id: from.account_number,
+            secondary_account_id: to.account_number,
+            amount: amt,
+            transaction_type: "TRANSFER_IN",
+            description,
+            balance: recipient.balance,
+          },
+        ],
+      });
       return sender.balance;
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
-    return ok({ success: true, referenceId: ref, balance: result.toString() });
+    });
+
+    return ok(
+      { success: true, balance: result ? result.toFixed(0) : "0" },
+      201,
+    );
   } catch (e) {
-    if (e instanceof Error && e.message === "INSUFFICIENT_BALANCE") return fail("Дансны үлдэгдэл хүрэлцэхгүй байна", 409);
-    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2034")
-      return fail("Давхацсан гүйлгээ илэрлээ. Дахин оролдоно уу", 409);
-    console.error("Transfer failed", e);
-    return fail("Шилжүүлэг хийхэд алдаа гарлаа", 500);
+    if (e instanceof TransferError) return fail(e.message, e.status);
+    if (e instanceof z.ZodError) return fail(messageFrom(e), 400);
+    console.error("Transfer error", e);
+    return fail("Шилжүүлэхэд алдаа гарлаа", 500);
   }
 }

@@ -16,12 +16,13 @@ model users {
   status            String?        @default("active") @db.VarChar(20)
   created_at        DateTime?      @default(now()) @db.Timestamp(6)
   reset_code        String?        @db.VarChar(10)
-  reset_code_expiry DateTime?      @db.Timestamptz(6) 
-  type          String? @default("PERSONAL") @db.VarChar(20)
-  business_name String? @db.VarChar(120)
+  reset_code_expiry DateTime?      @db.Timestamptz(6)
+  type              String?        @default("PERSONAL") @db.VarChar(20)
+  business_name     String?        @db.VarChar(120)
 
   accounts          accounts[]
-  qr_codes          qr_codes[]
+  qr_codes          qr_codes[]     @relation("qr_issuer")
+  paid_qr_codes     qr_codes[]     @relation("qr_payer")
   transactions      transactions[]
 }
 
@@ -50,11 +51,13 @@ model qr_codes {
   created_at     DateTime? @default(now()) @db.Timestamp(6)
   amount         Decimal?  @db.Decimal
   description    String?   @db.VarChar
-  status     String?   @default("PENDING") @db.VarChar(20)
-  expires_at DateTime? @db.Timestamp(6)
-  paid_at    DateTime? @db.Timestamp(6)
+  status         String?   @default("PENDING") @db.VarChar(20)
+  expires_at     DateTime? @db.Timestamp(6)
+  paid_at        DateTime? @db.Timestamp(6)
+  payer_id       Int?
 
-  users    users?    @relation(fields: [account_id], references: [account_id], onDelete: NoAction, onUpdate: NoAction)
+  users    users?    @relation("qr_issuer", fields: [account_id], references: [account_id], onDelete: NoAction, onUpdate: NoAction)
+  payer    users?    @relation("qr_payer", fields: [payer_id], references: [account_id], onDelete: NoAction, onUpdate: NoAction)
   accounts accounts? @relation(fields: [account_number], references: [account_number], onDelete: NoAction, onUpdate: NoAction)
 }
 

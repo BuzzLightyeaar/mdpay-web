@@ -6,17 +6,24 @@ const whole = (v: { toFixed: (n: number) => string } | null | undefined) =>
 
 export const serializeInvoice = (
   item: qr_codes & { issuer?: { name: string; businessName: string | null } },
-) => ({
-  id: item.qr_id.toString(),
-  amount: whole(item.amount),
-  description: item.description ?? "",
-  status: "PENDING", // qr_codes-д status багана байхгүй
-  createdAt: iso(item.created_at),
-  expiresAt: iso(item.created_at), // qr_codes-д expires_at байхгүй
-  paidAt: null as string | null,
-  issuerName: item.issuer?.businessName || item.issuer?.name || "",
-  isExpired: false,
-});
+) => {
+  const status = item.status ?? "PENDING";
+  const expires = item.expires_at ?? item.created_at ?? new Date();
+  return {
+    id: item.qr_id.toString(),
+    amount: whole(item.amount),
+    description: item.description ?? "",
+    status,
+    createdAt: iso(item.created_at),
+    expiresAt: expires.toISOString(),
+    paidAt: item.paid_at ? item.paid_at.toISOString() : (null as string | null),
+    issuerName: item.issuer?.businessName || item.issuer?.name || "",
+    isExpired:
+      status === "PENDING" &&
+      !!item.expires_at &&
+      item.expires_at.getTime() <= Date.now(),
+  };
+};
 
 export const serializeEntry = (e: transactions) => ({
   id: String(e.transaction_id),

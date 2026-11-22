@@ -1,32 +1,72 @@
-import "dotenv/config";
-import { PrismaClient, UserType, EntryKind } from "@prisma/client";
+import { PrismaClient, Prisma } from "@prisma/client";
 import { hash } from "bcryptjs";
+import { randomUUID } from "crypto";
 
 const db = new PrismaClient();
 
-async function createDemo(email: string, name: string, businessName: string | null, openingBalance: bigint) {
-  const passwordHash = await hash("Demo12345!", 12);
-  const user = await db.user.upsert({
-    where: { email },
-    update: {},
-    create: { email, name, passwordHash, type: businessName ? UserType.BUSINESS : UserType.PERSONAL, businessName },
-  });
-  const existingWallet = await db.wallet.findUnique({ where: { userId: user.id } });
-  if (!existingWallet) {
-    await db.$transaction(async (tx) => {
-      const wallet = await tx.wallet.create({ data: { userId: user.id, balance: openingBalance } });
-      await tx.walletEntry.create({
-        data: { walletId: wallet.id, amount: openingBalance, balanceAfter: openingBalance,
-          kind: EntryKind.OPENING_BALANCE, note: "Зөвхөн демо эхний үлдэгдэл", referenceId: `seed:${user.id}` },
-      });
-    });
-  }
-  return user;
-}
+const demoUsers = [
+  {
+    email: "merchant@mdpay.mn",
+    firstname: "Demo Merchant",
+    type: "BUSINESS",
+    business_name: "MDPay Demo Shop",
+    balance: 250000,
+  },
+  {
+    email: "customer@mdpay.mn",
+    firstname: "Demo Customer",
+    type: "PERSONAL",
+    business_name: null,
+    balance: 1000000,
+  },
+];
 
 async function main() {
-  await createDemo("merchant@mdpay.mn", "Бат-Эрдэнэ", "MD Coffee", 1850000n);
-  await createDemo("customer@mdpay.mn", "Номин", null, 980000n);
-  console.log("Demo seeded. merchant@mdpay.mn / customer@mdpay.mn | password: Demo12345!");
+  const passwordhash = await hash("Demo12345!", 12);
+
+  for (const d of demoUsers) {
+    const user = await db.users.upsert({
+      where: { email: d.email },
+      update: {},
+      create: {
+        email: d.email,
+        passwordhash,
+        firstname: d.firstname,
+        type: d.type,
+        business_name: d.business_name,
+      },
+    });
+
+    const existing = await db.accounts.findFirst({
+      where: { account_id: user.account_id },
+    });
+    if (existing) continue;
+
+    const balance = new Prisma.Decimal(d.balance);
+    const account = await db.accounts.create({
+      data: {
+        account_id: user.account_id,
+        account_token: randomUUID().slice(0, 20),
+        balance,
+      },
+    });
+    await db.transactions.create({
+      data: {
+        account_id: user.account_id,
+        default_account_id: account.account_number,
+        amount: balance,
+        transaction_type: "DEPOSIT",
+        description: "Нээлтийн үлдэгдэл",
+        balance,
+      },
+    });
+  }
+  console.log("Seed дууслаа");
 }
-main().catch((e) => { console.error(e); process.exitCode = 1; }).finally(() => db.$disconnect());
+
+main()
+  .catch((e) => {
+    console.error(e);
+    process.exit(1);
+  })
+  .finally(() => db.$disconnect());
