@@ -29,6 +29,7 @@ export const serializeInvoice = (
     id: item.qr_id.toString(),
     amount: whole(item.amount),
     description: item.description ?? "",
+    qrText: item.qr_text ?? "",
     status,
     createdAt: iso(item.created_at),
     expiresAt: expires.toISOString(),

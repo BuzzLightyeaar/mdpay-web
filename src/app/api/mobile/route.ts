@@ -63,6 +63,21 @@ async function authUser(req: NextRequest) {
   }
 }
 
+function ownerDisplayName(
+  u: {
+    firstname: string | null;
+    lastname: string | null;
+    business_name: string | null;
+  } | null,
+) {
+  if (!u) return "MDPay хэрэглэгч";
+  return (
+    u.business_name ||
+    [u.firstname, u.lastname].filter(Boolean).join(" ") ||
+    "MDPay хэрэглэгч"
+  );
+}
+
 const body = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("register"),
@@ -163,7 +178,9 @@ export async function POST(req: NextRequest) {
               orderBy: { created_at: "desc" },
               take: 4,
             }),
-            db.qr_codes.count({ where: { account_id: user.account_id } }),
+            db.qr_codes.count({
+              where: { account_id: user.account_id, status: "PENDING" },
+            }),
           ]);
         return ok({
           user: publicUser(user),
@@ -266,6 +283,7 @@ export async function POST(req: NextRequest) {
     return fail("Серверийн алдаа гарлаа", 500);
   }
 }
+
 export function OPTIONS() {
   return new Response(null, { status: 204 });
 }
