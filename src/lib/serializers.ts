@@ -13,6 +13,7 @@ export const serializeInvoice = (
     id: item.qr_id.toString(),
     amount: whole(item.amount),
     description: item.description ?? "",
+    qrText: item.qr_text ?? "",
     status,
     createdAt: iso(item.created_at),
     expiresAt: expires.toISOString(),
@@ -31,7 +32,7 @@ export const serializeEntry = (e: transactions) => ({
   balanceAfter: whole(e.balance),
   kind: e.transaction_type ?? "",
   note: e.description ?? "",
-  counterpartyName: "", // transactions-д байхгүй
+  counterpartyName: "",
   referenceId: String(e.transaction_id),
   createdAt: iso(e.created_at),
 });
