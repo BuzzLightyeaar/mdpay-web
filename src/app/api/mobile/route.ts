@@ -12,6 +12,7 @@ import {
   performTransfer,
   verifyPassword,
 } from "@/lib/transfer";
+import { appBaseUrl, createInvoice } from "@/lib/invoice-create";
 
 const ISSUER = "mdpay";
 const AUDIENCE = "mobile";
@@ -82,11 +83,15 @@ const body = z.discriminatedUnion("action", [
   z.object({ action: z.literal("me") }),
   z.object({ action: z.literal("summary") }),
   z.object({ action: z.literal("transactions") }),
-  z.object({ action: z.literal("invoices") }),
+  z.object({
+    action: z.literal("invoices"),
+    box: z.enum(["receivable", "payable"]).optional(),
+  }),
   z.object({
     action: z.literal("create_invoice"),
     amount: z.string(),
     description: z.string().trim().max(200).optional(),
+    receiverAccountNumber: z.string().trim().optional(),
   }),
   z.object({ action: z.literal("lookup_account"), accountNumber: z.string() }),
   z.object({
@@ -180,35 +185,45 @@ export async function POST(req: NextRequest) {
       }
 
       case "invoices": {
+        const nameSelect = {
+          firstname: true,
+          lastname: true,
+          business_name: true,
+        } as const;
         const rows = await db.qr_codes.findMany({
-          where: { account_id: user.account_id },
+          where:
+            input.box === "payable"
+              ? { receiver_id: user.account_id }
+              : { account_id: user.account_id },
+          include: {
+            users: { select: nameSelect },
+            receiver: { select: nameSelect },
+          },
           orderBy: { created_at: "desc" },
           take: 100,
         });
-        return ok({ invoices: rows.map(serializeInvoice) });
+        return ok({
+          invoices: rows.map((r) => serializeInvoice(r, user.account_id)),
+        });
       }
 
       case "create_invoice": {
         const amount = toAmount(input.amount);
         if (amount === null) return fail("Дүн буруу байна", 400);
-
-        const account = await db.accounts.findFirst({
-          where: { account_id: user.account_id },
-          orderBy: { id: "asc" },
+        const created = await createInvoice({
+          userId: user.account_id,
+          amount,
+          description: input.description,
+          receiverAccountNumber: input.receiverAccountNumber,
+          baseUrl: appBaseUrl(req),
         });
-        if (!account) return fail("Данс олдсонгүй", 404);
-
-        const qrText = `mdpay://pay?to=${account.account_number}&amount=${amount}&ref=${crypto.randomUUID().slice(0, 8)}`;
-        const created = await db.qr_codes.create({
-          data: {
-            account_id: user.account_id,
-            account_number: account.account_number,
-            qr_text: qrText,
-            amount: amount.toString(),
-            description: input.description ?? null,
+        return ok(
+          {
+            invoice: serializeInvoice(created, user.account_id),
+            qrText: created.qr_text,
           },
-        });
-        return ok({ invoice: serializeInvoice(created), qrText }, 201);
+          201,
+        );
       }
       case "lookup_account": {
         const num = parseAccountNumber(input.accountNumber);

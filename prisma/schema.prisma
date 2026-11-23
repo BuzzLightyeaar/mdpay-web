@@ -23,6 +23,7 @@ model users {
   accounts          accounts[]
   qr_codes          qr_codes[]     @relation("qr_issuer")
   paid_qr_codes     qr_codes[]     @relation("qr_payer")
+  received_qr_codes qr_codes[]     @relation("qr_receiver")
   transactions      transactions[]
 }
 
@@ -55,9 +56,11 @@ model qr_codes {
   expires_at     DateTime? @db.Timestamp(6)
   paid_at        DateTime? @db.Timestamp(6)
   payer_id       Int?
+  receiver_id    Int?
 
   users    users?    @relation("qr_issuer", fields: [account_id], references: [account_id], onDelete: NoAction, onUpdate: NoAction)
   payer    users?    @relation("qr_payer", fields: [payer_id], references: [account_id], onDelete: NoAction, onUpdate: NoAction)
+  receiver users?    @relation("qr_receiver", fields: [receiver_id], references: [account_id], onDelete: NoAction, onUpdate: NoAction)
   accounts accounts? @relation(fields: [account_number], references: [account_number], onDelete: NoAction, onUpdate: NoAction)
 }
 

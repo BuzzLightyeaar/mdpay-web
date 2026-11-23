@@ -25,6 +25,10 @@ export type Invoice = {
   paidAt: string | null;
   issuerName: string;
   isExpired: boolean;
+  direction?: "RECEIVABLE" | "PAYABLE";
+  receiverName?: string;
+  isDirected?: boolean;
+  qrText?: string;
 };
 export type Summary = {
   user: User;
