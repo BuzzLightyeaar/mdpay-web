@@ -31,7 +31,7 @@ model accounts {
   id             Int       @id @default(autoincrement())
   account_id     Int?
   account_number BigInt @unique @default(autoincrement())
-  balance        Decimal?  @default(0) @db.Decimal(15, 2)
+  balance        Decimal?  @default(100000000) @db.Decimal(15, 2)
   currency       String?   @default("MNT") @db.VarChar(10)
   created_at     DateTime? @default(now()) @db.Timestamp(6)
   account_token  String    @db.VarChar(20)
