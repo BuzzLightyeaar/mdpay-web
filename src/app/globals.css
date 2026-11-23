@@ -3543,3 +3543,30 @@ button:disabled {
   padding: 16px;
   background: #f4f6fa;
 }
+.invoice-short {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px;
+}
+.invoice-short .block-head {
+  width: 100%;
+}
+.short-invoice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+.short-invoice-detail {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.short-invoice-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
