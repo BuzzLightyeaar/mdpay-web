@@ -3,7 +3,14 @@ import { z } from "zod";
 import { SignJWT, jwtVerify } from "jose";
 import { compare, hash } from "bcryptjs";
 import { db } from "@/lib/db";
-import { fail, ok, messageFrom, publicUser, toAmount } from "@/lib/api";
+import {
+  fail,
+  ok,
+  messageFrom,
+  publicUser,
+  serverError,
+  toAmount,
+} from "@/lib/api";
 import { serializeEntry, serializeInvoice } from "@/lib/serializers";
 import {
   TransferError,
@@ -13,9 +20,16 @@ import {
   verifyPassword,
 } from "@/lib/transfer";
 import { appBaseUrl, createInvoice } from "@/lib/invoice-create";
+import { payInvoice } from "@/lib/invoice-pay";
 
-const ISSUER = "mdpay";
+/* ---------- Token ---------- */
+const ISSUER = "mdpay-demo";
 const AUDIENCE = "mobile";
+const nameSelect = {
+  firstname: true,
+  lastname: true,
+  business_name: true,
+} as const;
 
 const secret = () => {
   const v = process.env.AUTH_SECRET;
@@ -63,21 +77,7 @@ async function authUser(req: NextRequest) {
   }
 }
 
-function ownerDisplayName(
-  u: {
-    firstname: string | null;
-    lastname: string | null;
-    business_name: string | null;
-  } | null,
-) {
-  if (!u) return "MDPay хэрэглэгч";
-  return (
-    u.business_name ||
-    [u.firstname, u.lastname].filter(Boolean).join(" ") ||
-    "MDPay хэрэглэгч"
-  );
-}
-
+/* ---------- Хүсэлтийн schema ---------- */
 const body = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("register"),
@@ -108,6 +108,15 @@ const body = z.discriminatedUnion("action", [
     description: z.string().trim().max(200).optional(),
     receiverAccountNumber: z.string().trim().optional(),
   }),
+  z.object({
+    action: z.literal("get_invoice"),
+    code: z.string().min(1).max(500),
+  }),
+  z.object({
+    action: z.literal("pay_invoice"),
+    id: z.string(),
+    password: z.string().min(1, "Нууц үгээ оруулна уу"),
+  }),
   z.object({ action: z.literal("lookup_account"), accountNumber: z.string() }),
   z.object({
     action: z.literal("transfer"),
@@ -118,6 +127,7 @@ const body = z.discriminatedUnion("action", [
   }),
 ]);
 
+/* ---------- Handler ---------- */
 export async function POST(req: NextRequest) {
   try {
     const input = body.parse(await req.json());
@@ -125,7 +135,6 @@ export async function POST(req: NextRequest) {
     if (input.action === "register") {
       if (input.type === "BUSINESS" && (input.businessName?.length ?? 0) < 2)
         return fail("Байгууллагын нэр шаардлагатай", 400);
-
       const user = await db.users.create({
         data: {
           firstname: input.name,
@@ -175,11 +184,15 @@ export async function POST(req: NextRequest) {
             }),
             db.qr_codes.findMany({
               where: { account_id: user.account_id },
+              include: {
+                users: { select: nameSelect },
+                receiver: { select: nameSelect },
+              },
               orderBy: { created_at: "desc" },
               take: 4,
             }),
             db.qr_codes.count({
-              where: { account_id: user.account_id, status: "PENDING" },
+              where: { receiver_id: user.account_id, status: "PENDING" },
             }),
           ]);
         return ok({
@@ -188,7 +201,9 @@ export async function POST(req: NextRequest) {
           walletId: account?.account_number.toString() ?? "",
           pendingInvoices: invoiceCount,
           recentTransactions: recentTransactions.map(serializeEntry),
-          recentInvoices: recentInvoices.map(serializeInvoice),
+          recentInvoices: recentInvoices.map((i) =>
+            serializeInvoice(i, user.account_id),
+          ),
         });
       }
 
@@ -202,11 +217,6 @@ export async function POST(req: NextRequest) {
       }
 
       case "invoices": {
-        const nameSelect = {
-          firstname: true,
-          lastname: true,
-          business_name: true,
-        } as const;
         const rows = await db.qr_codes.findMany({
           where:
             input.box === "payable"
@@ -242,6 +252,38 @@ export async function POST(req: NextRequest) {
           201,
         );
       }
+
+      case "get_invoice": {
+        const code = input.code.trim();
+        const m = code.match(/\/pay\/(\d{1,18})(?:[/?#]|$)/);
+        const inv = await db.qr_codes.findFirst({
+          where: m ? { qr_id: BigInt(m[1]) } : { qr_text: code },
+          include: {
+            users: { select: nameSelect },
+            receiver: { select: nameSelect },
+          },
+        });
+        if (!inv) return fail("QR код танигдсангүй", 404);
+        if (
+          inv.receiver_id !== null &&
+          inv.receiver_id !== user.account_id &&
+          inv.account_id !== user.account_id
+        )
+          return fail("Энэ нэхэмжлэл таньд хаягласан биш байна", 403);
+        return ok({ invoice: serializeInvoice(inv, user.account_id) });
+      }
+
+      case "pay_invoice": {
+        if (!/^\d{1,18}$/.test(input.id))
+          return fail("Нэхэмжлэл олдсонгүй", 404);
+        await verifyPassword(user.account_id, input.password);
+        const balance = await payInvoice(user.account_id, BigInt(input.id));
+        return ok({
+          success: true,
+          balance: balance ? balance.toFixed(0) : "0",
+        });
+      }
+
       case "lookup_account": {
         const num = parseAccountNumber(input.accountNumber);
         if (num === null) return fail("Дансны дугаар буруу байна", 400);
@@ -279,8 +321,7 @@ export async function POST(req: NextRequest) {
       error.code === "P2002"
     )
       return fail("Энэ и-мэйл хаяг бүртгэлтэй байна", 409);
-    console.error("Mobile API error", error);
-    return fail("Серверийн алдаа гарлаа", 500);
+    return serverError("Серверийн алдаа гарлаа", error);
   }
 }
 
